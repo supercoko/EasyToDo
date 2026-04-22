@@ -1,0 +1,20 @@
+[package]
+name = "focus-float-todo"
+version = "0.1.0"
+description = "Always-visible floating todo tool built with Tauri"
+authors = ["OpenAI Codex"]
+edition = "2021"
+
+[lib]
+name = "focus_float_todo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-autostart = "2"
+tauri-plugin-global-shortcut = "2"

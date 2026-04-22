@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "防遗忘待办",
+  "version": "0.1.0",
+  "identifier": "com.codex.focusfloattodo",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "防遗忘待办",
+        "width": 340,
+        "height": 680,
+        "resizable": false,
+        "fullscreen": false,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "visible": true,
+        "center": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

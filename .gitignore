@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.codex-home/
+.codex-temp/
+src-tauri/target/
