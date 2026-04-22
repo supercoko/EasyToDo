@@ -36,6 +36,12 @@ type CollapsedDragState = {
   dragged: boolean;
 };
 
+type GitSyncResult = {
+  todos: TodoItem[];
+  settings: AppSettings;
+  commitMessage: string;
+};
+
 function sortOpenTodos(todos: TodoItem[]) {
   return [...todos].sort((left, right) => {
     if (left.pinned !== right.pinned) {
@@ -69,7 +75,9 @@ function App() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [editingTodoId, setEditingTodoId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
 
@@ -497,6 +505,26 @@ function App() {
     } catch (launchError) {
       console.error(launchError);
       setError(DEFAULT_ERROR);
+    }
+  };
+
+  const handleGitSync = async () => {
+    setSyncing(true);
+    setError(null);
+    setSyncMessage(null);
+
+    try {
+      const result = await invoke<GitSyncResult>("sync_git_todos");
+      setData({
+        todos: result.todos,
+        settings: result.settings
+      });
+      setSyncMessage(`同步完成：${result.commitMessage}`);
+    } catch (syncError) {
+      console.error(syncError);
+      setError(typeof syncError === "string" ? syncError : "Git 同步失败。");
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -982,10 +1010,88 @@ function App() {
             开机自启
           </label>
 
+          <label className="toggle-row">
+            <input
+              checked={settings.gitSyncEnabled}
+              onChange={(event) => {
+                void saveSettings({
+                  ...settings,
+                  gitSyncEnabled: event.target.checked
+                });
+              }}
+              type="checkbox"
+            />
+            启用 Git 同步
+          </label>
+
+          <div className="settings-row settings-stack">
+            <span>Git 仓库路径</span>
+            <input
+              className="settings-text"
+              onChange={(event) => {
+                mergeSettings({
+                  ...settings,
+                  gitRepoPath: event.target.value
+                });
+              }}
+              onBlur={() => void saveSettings(settings)}
+              placeholder="例如 D:\sync\todo-repo"
+              type="text"
+              value={settings.gitRepoPath}
+            />
+          </div>
+
+          <div className="settings-row settings-stack">
+            <span>同步分支</span>
+            <input
+              className="settings-text"
+              onChange={(event) => {
+                mergeSettings({
+                  ...settings,
+                  gitBranch: event.target.value
+                });
+              }}
+              onBlur={() => void saveSettings(settings)}
+              placeholder="main"
+              type="text"
+              value={settings.gitBranch}
+            />
+          </div>
+
+          <div className="settings-row settings-stack">
+            <span>同步文件</span>
+            <input
+              className="settings-text"
+              onChange={(event) => {
+                mergeSettings({
+                  ...settings,
+                  gitTodosFile: event.target.value
+                });
+              }}
+              onBlur={() => void saveSettings(settings)}
+              placeholder="focus-float-todo/todos.json"
+              type="text"
+              value={settings.gitTodosFile}
+            />
+          </div>
+
+          <button
+            className="sync-button"
+            disabled={!settings.gitSyncEnabled || syncing}
+            onClick={() => void handleGitSync()}
+            type="button"
+          >
+            {syncing ? "同步中..." : "立即同步"}
+          </button>
+
+          {syncMessage ? <div className="sync-banner success">{syncMessage}</div> : null}
+
           <div className="settings-hint">
             全局快捷键：<strong>{shortcutLabel()}</strong>
           </div>
-          <div className="settings-hint">折叠态可直接拖动；轻点折叠态则展开窗口。</div>
+          <div className="settings-hint">
+            Git 同步流程：`pull --rebase` {"->"} 写入待办 JSON {"->"} `commit` {"->"} `push`
+          </div>
         </section>
       ) : null}
 
@@ -1034,7 +1140,7 @@ function App() {
 
       <footer className="status-bar">
         <span>{saving ? "正在保存..." : "已自动保存"}</span>
-        <span>{settings.collapseToEdge ? "折叠后贴边" : "折叠后悬浮圆球"}</span>
+        <span>{settings.gitSyncEnabled ? "Git 同步已启用" : "仅本地保存"}</span>
       </footer>
 
       <div className="resize-handle" onPointerDown={startResize} />

@@ -19,6 +19,10 @@ export interface AppSettings {
   expandedWidth: number;
   expandedHeight: number;
   collapseToEdge: boolean;
+  gitSyncEnabled: boolean;
+  gitRepoPath: string;
+  gitBranch: string;
+  gitTodosFile: string;
   collapsed: boolean;
   theme: string;
 }

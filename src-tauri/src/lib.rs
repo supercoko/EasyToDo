@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -55,6 +56,10 @@ struct AppSettings {
     expanded_width: f64,
     expanded_height: f64,
     collapse_to_edge: bool,
+    git_sync_enabled: bool,
+    git_repo_path: String,
+    git_branch: String,
+    git_todos_file: String,
     collapsed: bool,
     theme: String,
 }
@@ -72,6 +77,10 @@ impl Default for AppSettings {
             expanded_width: DEFAULT_EXPANDED_WIDTH,
             expanded_height: DEFAULT_EXPANDED_HEIGHT,
             collapse_to_edge: true,
+            git_sync_enabled: false,
+            git_repo_path: String::new(),
+            git_branch: "main".to_string(),
+            git_todos_file: "focus-float-todo/todos.json".to_string(),
             collapsed: false,
             theme: "graphite".to_string(),
         }
@@ -83,6 +92,21 @@ impl Default for AppSettings {
 struct LoadedAppState {
     todos: Vec<TodoItem>,
     settings: AppSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitSyncPayload {
+    todos: Vec<TodoItem>,
+    updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitSyncResult {
+    todos: Vec<TodoItem>,
+    settings: AppSettings,
+    commit_message: String,
 }
 
 struct AppStore {
@@ -135,6 +159,21 @@ fn sanitize_settings(mut settings: AppSettings) -> AppSettings {
 
     settings.expanded_width = clamp_expanded_width(settings.expanded_width);
     settings.expanded_height = clamp_expanded_height(settings.expanded_height);
+    settings.git_repo_path = settings.git_repo_path.trim().to_string();
+    settings.git_branch = if settings.git_branch.trim().is_empty() {
+        "main".to_string()
+    } else {
+        settings.git_branch.trim().to_string()
+    };
+    settings.git_todos_file = if settings.git_todos_file.trim().is_empty() {
+        "focus-float-todo/todos.json".to_string()
+    } else {
+        settings.git_todos_file
+            .trim()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string()
+    };
 
     settings.theme = sanitize_theme(settings.theme.trim());
 
@@ -164,6 +203,100 @@ fn persist_store(store: &AppStore) -> Result<(), String> {
     fs::write(todos_path, todos_bytes).map_err(|error| error.to_string())?;
     fs::write(settings_path, settings_bytes).map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn run_git(repo_path: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(args)
+        .output()
+        .map_err(|error| format!("Failed to run git {:?}: {}", args, error))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+fn write_git_sync_file(repo_path: &str, relative_file: &str, todos: &[TodoItem]) -> Result<(), String> {
+    let full_path = Path::new(repo_path).join(relative_file);
+    if let Some(parent) = full_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let payload = GitSyncPayload {
+        todos: todos.to_vec(),
+        updated_at: now_millis(),
+    };
+    let bytes = serde_json::to_vec_pretty(&payload).map_err(|error| error.to_string())?;
+    fs::write(full_path, bytes).map_err(|error| error.to_string())
+}
+
+fn read_git_sync_file(repo_path: &str, relative_file: &str) -> Result<Option<GitSyncPayload>, String> {
+    let full_path = Path::new(repo_path).join(relative_file);
+    if !full_path.exists() {
+        return Ok(None);
+    }
+
+    let bytes = fs::read(full_path).map_err(|error| error.to_string())?;
+    let payload = serde_json::from_slice::<GitSyncPayload>(&bytes).map_err(|error| error.to_string())?;
+    Ok(Some(payload))
+}
+
+fn sync_todos_with_git(store: &mut AppStore) -> Result<GitSyncResult, String> {
+    let settings = sanitize_settings(store.settings.clone());
+    if !settings.git_sync_enabled {
+        return Err("Git sync is not enabled.".to_string());
+    }
+
+    if settings.git_repo_path.is_empty() {
+        return Err("Git repository path is required.".to_string());
+    }
+
+    let repo_path = Path::new(&settings.git_repo_path);
+    if !repo_path.exists() {
+        return Err("Configured Git repository path does not exist.".to_string());
+    }
+
+    run_git(
+        &settings.git_repo_path,
+        &["pull", "--rebase", "origin", settings.git_branch.as_str()],
+    )?;
+
+    if let Some(remote_payload) = read_git_sync_file(&settings.git_repo_path, &settings.git_todos_file)? {
+        if remote_payload.updated_at > store.todos.iter().map(|todo| todo.updated_at).max().unwrap_or_default() {
+            store.todos = remote_payload.todos;
+        }
+    }
+
+    write_git_sync_file(&settings.git_repo_path, &settings.git_todos_file, &store.todos)?;
+
+    run_git(&settings.git_repo_path, &["add", settings.git_todos_file.as_str()])?;
+
+    let commit_message = format!("sync todos {}", now_millis());
+    match run_git(
+        &settings.git_repo_path,
+        &["commit", "-m", commit_message.as_str()],
+    ) {
+        Ok(_) => {}
+        Err(error) if error.contains("nothing to commit") => {}
+        Err(error) => return Err(error),
+    }
+
+    run_git(
+        &settings.git_repo_path,
+        &["push", "origin", settings.git_branch.as_str()],
+    )?;
+
+    store.settings = settings.clone();
+    persist_store(store)?;
+
+    Ok(GitSyncResult {
+        todos: store.todos.clone(),
+        settings,
+        commit_message,
+    })
 }
 
 fn data_dir(app: &AppHandle) -> PathBuf {
@@ -550,6 +683,12 @@ fn persist_window_position(
     Ok(saved)
 }
 
+#[tauri::command]
+fn sync_git_todos(state: State<'_, SharedStore>) -> Result<GitSyncResult, String> {
+    let mut store = state.0.lock().map_err(|_| "Store unavailable".to_string())?;
+    sync_todos_with_git(&mut store)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -581,7 +720,8 @@ pub fn run() {
             set_window_opacity,
             set_launch_at_login,
             set_expanded_size,
-            persist_window_position
+            persist_window_position,
+            sync_git_todos
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

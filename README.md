@@ -20,6 +20,7 @@
 - 展开窗口支持右下角拖拽调大小
 - 支持设置展开宽度 / 展开高度
 - 支持界面颜色主题切换
+- 支持通过 Git 仓库手动同步待办
 - 支持透明度调节
 - 本地 JSON 持久化保存
 - 支持开机自启
@@ -68,6 +69,32 @@ cargo check --manifest-path src-tauri\Cargo.toml
 - 展开态顶部区域可拖动窗口
 - 展开态右下角拖拽手柄可调节大小
 - 折叠态轻点会展开，拖动则移动折叠窗口位置
+- 若启用 Git 同步，可在设置中手动触发同步
+
+## Git 同步
+设置面板支持以下 Git 同步配置：
+- `启用 Git 同步`
+- `Git 仓库路径`
+- `同步分支`
+- `同步文件`
+
+当前同步流程：
+1. `git pull --rebase origin <branch>`
+2. 将待办写入配置的 JSON 文件
+3. `git add <file>`
+4. `git commit -m "sync todos <timestamp>"`
+5. `git push origin <branch>`
+
+默认同步文件路径：
+
+```text
+focus-float-todo/todos.json
+```
+
+建议：
+- 先准备一个独立的小型 Git 仓库专门存待办
+- 提前配置好 `origin` 和可正常推送的认证
+- 多端使用相同仓库与文件路径
 
 ## 数据存储
 应用会在 Tauri 的应用数据目录中保存：
